@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mediapipe Pose Correction</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <style>
+        video, canvas {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+    <audio id="headDropAudio" src="head_Drop.mp3"></audio>
+    <audio id="straightenBackAudio" src="straighten_back.mp3"></audio>
+
+    <script>
+        // Get elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const headDropAudio = document.getElementById('headDropAudio');
+        const straightenBackAudio = document.getElementById('straightenBackAudio');
+
+        // Function to play audio (only if not already playing)
+        function playAudio(audioElement) {
+            if (!audioElement.paused) return;
+            audioElement.play();
+        }
+
+        // Function to calculate angle between three points
+        function calculateAngle(a, b, c) {
+            const ba = [a[0] - b[0], a[1] - b[1]];
+            const bc = [c[0] - b[0], c[1] - b[1]];
+            const cosineAngle = (ba[0] * bc[0] + ba[1] * bc[1]) / 
+                               (Math.sqrt(ba[0] ** 2 + ba[1] ** 2) * Math.sqrt(bc[0] ** 2 + bc[1] ** 2));
+            return Math.acos(Math.min(Math.max(cosineAngle, -1.0), 1.0)) * (180 / Math.PI);
+        }
+
+        // Initialize MediaPipe Pose
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(results => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            if (results.poseLandmarks) {
+                drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {color: 'lime', lineWidth: 2});
+                drawLandmarks(ctx, results.poseLandmarks, {color: 'red', radius: 3});
+
+                const landmarks = results.poseLandmarks;
+
+                // Get key points
+                const shoulder = [landmarks[11].x, landmarks[11].y]; // LEFT_SHOULDER
+                const hip = [landmarks[23].x, landmarks[23].y]; // LEFT_HIP
+                const ankle = [landmarks[27].x, landmarks[27].y]; // LEFT_ANKLE
+                const ear = [landmarks[7].x, landmarks[7].y]; // LEFT_EAR
+                const eye = [landmarks[5].x, landmarks[5].y]; // LEFT_EYE
+
+                // Calculate angles
+                const backAngle = calculateAngle(shoulder, hip, ankle);
+                const headDropped = eye[1] > (ear[1] + 0.03);
+
+                // Check for mistakes
+                if (backAngle < 155) {
+                    ctx.fillStyle = "red";
+                    ctx.font = "20px Arial";
+                    ctx.fillText("Straighten your back!", 50, 50);
+                    playAudio(straightenBackAudio);
+                }
+
+                if (headDropped) {
+                    ctx.fillStyle = "red";
+                    ctx.font = "20px Arial";
+                    ctx.fillText("Keep your head up!", 50, 100);
+                    playAudio(headDropAudio);
+                }
+            }
+        });
+
+        // Start video stream
+        async function startVideo() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                video.play();
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            };
+        }
+
+        // Process video frames
+        async function processFrame() {
+            await pose.send({ image: video });
+            requestAnimationFrame(processFrame);
+        }
+
+        // Start app
+        startVideo().then(() => processFrame());
+    </script>
+
+</body>
+</html>
